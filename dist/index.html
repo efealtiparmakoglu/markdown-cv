@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>markdown-cv editor — offline</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: ui-monospace, monospace;
+    background: #101418; color: #d7dde3;
+    margin: 0; padding: 16px; display: flex; flex-direction: column; gap: 10px;
+  }
+  h1 { font-size: 18px; margin: 0; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .cols { display: flex; gap: 14px; align-items: stretch; }
+  textarea {
+    width: 46vw; height: 78vh; font: inherit; font-size: 13px;
+    background: #1b2129; color: #d7dde3; border: 1px solid #2c343c;
+  }
+  iframe {
+    width: 46vw; height: 78vh; background: white;
+    border: 1px solid #2c343c;
+  }
+  select, button {
+    font: inherit; background: #1b2129; color: #d7dde3;
+    border: 1px solid #2c343c; padding: 5px 10px; cursor: pointer;
+  }
+  #download { display: none; }
+</style>
+</head>
+<body>
+  <h1>markdown-cv editor <small>(offline)</small></h1>
+  <div class="row noprint">
+    <select id="theme">
+      <option value="classic">classic</option>
+      <option value="modern">modern</option>
+      <option value="mono">mono</option>
+    </select>
+    <label><input type="checkbox" id="compact"> compact (one page)</label>
+    <button id="save">save HTML</button>
+  </div>
+  <div class="cols">
+    <textarea id="input" spellcheck="false"></textarea>
+    <iframe id="preview" title="preview"></iframe>
+  </div>
+<script type="module">
+// markdown.ts + render.ts (inlined)
+/* Markdown → HTML converter, scoped to the constructs a CV uses:
+ * headings, paragraphs, bullet/numbered lists, bold/italic/inline-code,
+ * links, horizontal rules. Zero dependencies. */
+
+export function escapeHtml(text        )         {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+export function inline(text        )         {
+  let out = escapeHtml(text);
+  // inline code first (protect from other substitutions)
+  out = out.replace(/`([^`]+)`/g, (_m, code        ) => `<code>${code}</code>`);
+  // bold then italic
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  // links [text](url)
+  out = out.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    (_m, label        , url        ) => `<a href="${url}">${label}</a>`,
+  );
+  return out;
+}
+
+                          
+                
+               
+             
+ 
+
+                                
+               
+                      
+ 
+
+/** Convert Markdown text to an HTML fragment. */
+export function convert(markdown        )                {
+  const lines = markdown.split("\n");
+  const out           = [];
+  const headings            = [];
+  let listOpen                     = null;
+  let paragraph           = [];
+
+  const closeList = ()       => {
+    if (listOpen) {
+      out.push(`</${listOpen}>`);
+      listOpen = null;
+    }
+  };
+  const closeParagraph = ()       => {
+    if (paragraph.length > 0) {
+      out.push(`<p>${inline(paragraph.join(" "))}</p>`);
+      paragraph = [];
+    }
+  };
+  const slug = (text        )         =>
+    text.toLowerCase().replaceAll(" ", "-").replace(/[^\w-]/g, "");
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    // headings
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (heading) {
+      closeParagraph();
+      closeList();
+      const level = heading[1] .length;
+      const text = inline(heading[2]          );
+      const id = slug(heading[2]          );
+      headings.push({ level, text: heading[2]          , id });
+      out.push(`<h${level} id="${id}">${text}</h${level}>`);
+      continue;
+    }
+    // horizontal rule
+    if (/^---+\s*$/.test(line)) {
+      closeParagraph();
+      closeList();
+      out.push("<hr>");
+      continue;
+    }
+    // bullets
+    if (/^[-*]\s+/.test(line)) {
+      closeParagraph();
+      if (listOpen !== "ul") {
+        closeList();
+        out.push("<ul>");
+        listOpen = "ul";
+      }
+      out.push(`<li>${inline(line.replace(/^[-*]\s+/, ""))}</li>`);
+      continue;
+    }
+    // numbered list
+    const numbered = /^\d+\.\s+(.*)$/.exec(line);
+    if (numbered) {
+      closeParagraph();
+      if (listOpen !== "ol") {
+        closeList();
+        out.push("<ol>");
+        listOpen = "ol";
+      }
+      out.push(`<li>${inline(numbered[1]          )}</li>`);
+      continue;
+    }
+    // blank line closes the paragraph
+    if (line.trim() === "") {
+      closeParagraph();
+      continue;
+    }
+    // contact line (starts with an email or phone indicator) stays plain
+    paragraph.push(line.trim());
+  }
+  closeParagraph();
+  closeList();
+  return { html: out.join("\n"), headings };
+}
+
+/** Extract the person's name: first level-1 heading. */
+export function extractName(markdown        )         {
+  const heading = /^#\s+(.+)$/m.exec(markdown);
+  return heading ? (heading[1]          ) : "Curriculum Vitae";
+}
+
+/* Page assembly: wrap converted HTML in a themed, print-ready document.
+ * "compact" mode shrinks type/spacing so long CVs print on one page. */
+
+
+                                                      
+
+                      
+                 
+               
+                      
+                     
+               
+                    
+ 
+
+const THEMES                                = {
+  classic: {
+    accent: "#1a3c6e",
+    font: "Georgia, 'Times New Roman', serif",
+    headingSize: "20px",
+    background: "#ffffff",
+    text: "#1a1a1a",
+    ruleStyle: "1px solid #1a3c6e",
+  },
+  modern: {
+    accent: "#0f766e",
+    font: "system-ui, -apple-system, sans-serif",
+    headingSize: "22px",
+    background: "#fbfdfb",
+    text: "#14201d",
+    ruleStyle: "2px solid #0f766e",
+  },
+  mono: {
+    accent: "#333333",
+    font: "ui-monospace, 'Cascadia Mono', monospace",
+    headingSize: "18px",
+    background: "#fefefe",
+    text: "#222222",
+    ruleStyle: "1px dashed #333333",
+  },
+};
+
+                              
+                   
+                   
+                 
+ 
+
+export function renderPage(markdown        , options             )         {
+  const style = THEMES[options.theme] ?? THEMES.classic;
+  const result                = convert(markdown);
+  const name = options.title ?? extractName(markdown);
+  const scale = options.compact ? "compact" : "";
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${name}</title>
+<style>
+  body {
+    font-family: ${style.font};
+    background: ${style.background};
+    color: ${style.text};
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 32px;
+    line-height: 1.5;
+  }
+  h1 { color: ${style.accent}; font-size: 30px; margin: 0 0 4px; }
+  h2 {
+    color: ${style.accent}; font-size: ${style.headingSize};
+    border-bottom: ${style.ruleStyle};
+    padding-bottom: 3px; margin: 22px 0 8px;
+  }
+  h3 { margin: 14px 0 4px; font-size: 1.02em; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0; padding-left: 22px; }
+  li { margin: 2px 0; }
+  a { color: ${style.accent}; }
+  code {
+    background: rgba(0,0,0,0.06);
+    padding: 1px 5px; border-radius: 3px;
+    font-size: 0.92em;
+  }
+  hr { border: none; border-top: ${style.ruleStyle}; margin: 18px 0; }
+  ${options.compact ? ".compact .cv-scaler { zoom: 0.82; }" : ""}
+  @media print {
+    body { padding: 0; }
+    h2 { break-after: avoid; }
+    li { break-inside: avoid; }
+    ${options.compact ? "body { zoom: 0.8; }" : ""}
+  }
+</style>
+</head>
+<body class="${scale}">
+<div class="cv-scaler">
+${result.html}
+</div>
+</body>
+</html>
+`;
+}
+
+/* Editor logic: markdown textarea -> themed iframe preview, save button.
+ * The preview document carries the print styles, so Ctrl+P inside the
+ * iframe produces the PDF. renderPage comes from render.ts (inlined by
+ * the single-file build). */
+
+
+const SAMPLE = `# Your Name
+you@example.com | +90 555 0101 | [site](https://example.com)
+
+## Experience
+
+- **Role** at Company (2020-2026)
+  - what you built
+  - what you *shipped*
+
+## Skills
+
+1. skill one
+2. skill two
+
+---
+
+## References
+
+Available on request.`;
+
+let theme            = "classic";
+let compact = false;
+let lastHtml = "";
+let lastName = "cv";
+
+function renderPreview()       {
+  const input = document.getElementById("input")                       ;
+  const frame = document.getElementById("preview")                     ;
+  lastHtml = renderPage(input.value, { theme, compact, title: extractName(input.value) });
+  lastName = extractName(input.value) || "cv";
+  const doc = frame.contentDocument;
+  if (doc) {
+    doc.open();
+    doc.write(lastHtml);
+    doc.close();
+  }
+  document.title = `${lastName} — markdown-cv`;
+  try {
+    localStorage.setItem("markdown-cv-input", input.value);
+    localStorage.setItem("markdown-cv-theme", theme);
+    localStorage.setItem("markdown-cv-compact", compact ? "1" : "0");
+  } catch {
+    /* private mode */
+  }
+}
+
+function setup()       {
+  const input = document.getElementById("input")                       ;
+  input.value = localStorage.getItem("markdown-cv-input") ?? SAMPLE;
+  theme = (localStorage.getItem("markdown-cv-theme")             ) ?? "classic";
+  compact = localStorage.getItem("markdown-cv-compact") === "1";
+  (document.getElementById("theme")                     ).value = theme;
+  (document.getElementById("compact")                    ).checked = compact;
+
+  const repaint = ()       => {
+    theme = (document.getElementById("theme")                     ).value             ;
+    compact = (document.getElementById("compact")                    ).checked;
+    renderPreview();
+  };
+  document.getElementById("theme")?.addEventListener("change", repaint);
+  document.getElementById("compact")?.addEventListener("change", repaint);
+  document.getElementById("save")?.addEventListener("click", () => {
+    const blob = new Blob([lastHtml], { type: "text/html" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${lastName}.html`;
+    link.click();
+  });
+  input.addEventListener("input", renderPreview);
+  try {
+    renderPreview();
+  } catch (error) {
+    document.body.dataset.error = String(error);
+  }
+  document.body.dataset.qa =
+    `preview=${document.getElementById("preview") ? "yes" : "no"}`;
+}
+
+if (typeof document !== "undefined" && document.getElementById("input")) {
+  setup();
+}
+
+</script>
+</body>
+</html>

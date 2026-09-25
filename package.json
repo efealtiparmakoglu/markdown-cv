@@ -1,0 +1,12 @@
+{
+  "name": "markdown-cv",
+  "version": "1.0.0",
+  "description": "Convert a Markdown CV to a styled single-file HTML (print to PDF) — multiple themes, one-page compression, no external services",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "test": "node --test tests/",
+    "build": "node build.ts"
+  }
+}
